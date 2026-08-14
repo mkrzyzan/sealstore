@@ -1,0 +1,83 @@
+# 🔐 SealStore — a commit‑reveal key/value chain (CometBFT)
+
+A sovereign CometBFT blockchain that stores key/value data in a **commit‑reveal**
+scheme: nothing is revealed until its hash has been committed first.
+
+## 🤔 What problem it solves
+
+Public ledgers leak: values sit in the mempool before they land on-chain, so the
+last actor can always front‑run or outbid the first. SealStore flips that — you
+**seal** a value by publishing `sha256(value)`, and **open** it later by revealing
+the value, which is verified against the seal. Great for sealed‑bid auctions,
+private voting, or unbiasable randomness.
+
+## ⚙️ How it works
+
+Two transaction types:
+
+- `commit=<key>=<raw sha256(value)>` — store the commitment (kept afterward for verification)
+- `reveal=<key>=<value>` — accepted only if `sha256(value)` matches the seal
+
+Anything else — or a reveal with no/mismatched commit — is rejected (ABCI code 1).
+
+## 📦 Requirements
+
+- Go 1.25+
+- `cometbft` (pure Go): `go install github.com/cometbft/cometbft/cmd/cometbft@v0.38.0`
+
+## 🚀 Build & run (pure Go, no Docker)
+
+```bash
+# 1. build the ABCI app + CLI
+go build -o mystore . && go build -o mystore-cli ./cli
+
+# 2. init & start the node (do init once)
+cometbft init --home /tmp/cometbft-home
+./mystore -kv-home $HOME/.kvstore
+cometbft node --home /tmp/cometbft-home --proxy_app=unix:///tmp/example.sock
+```
+
+The node RPC is then at `localhost:26657`.
+
+## 💻 Use via the CLI
+
+**One user (quick path):**
+
+```bash
+./mystore-cli health
+./mystore-cli set city paris          # commit + reveal in one
+./mystore-cli get city                # → paris
+./mystore-cli getcommit city          # → the stored seal (sha256 hex)
+```
+
+**Two users — see the secrecy in action (e.g. a sealed bid):**
+
+Alice seals a bid (only the hash is published — the value stays hidden):
+
+```bash
+./mystore-cli commit bid1 100         # Alice: seal sha256("100")
+# → "bid1": commitment = sha256("100") = <hex>
+```
+
+Bob, watching the chain, can see the seal but *not* the value:
+
+```bash
+./mystore-cli getcommit bid1          # Bob: sees only the seal → <hex>
+./mystore-cli get bid1                # Bob: "key does not exist" (value hidden)
+```
+
+Alice opens the seal by revealing the value (verified against it):
+
+```bash
+./mystore-cli reveal bid1 100         # Alice: opens it
+./mystore-cli get bid1                # Bob, now: → 100
+```
+
+Bob can independently verify: `sha256("100")` must equal the seal he saw earlier
+(`getcommit bid1` is unchanged — the seal is kept for verification).
+
+## ✅ Tests
+
+```bash
+go test ./...
+```
