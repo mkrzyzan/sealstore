@@ -3,11 +3,62 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"log"
 
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	"github.com/dgraph-io/badger/v3"
 )
+
+// TxType distinguishes the two transaction kinds handled by MyApp.
+type TxType uint8
+
+const (
+	TxUnknown TxType = iota
+	TxCommit
+	TxReveal
+)
+
+var (
+	commitPrefix = []byte("commit=")
+	revealPrefix = []byte("reveal=")
+)
+
+// parseTx classifies a raw transaction and extracts its key and payload.
+// CommitTx wire format:  commit=key=hash
+// RevealTx wire format:  reveal=key=value
+// An empty, wrongly-prefixed, or payload-less tx yields TxUnknown.
+func parseTx(tx []byte) (typ TxType, key, payload []byte) {
+	for _, p := range []struct {
+		prefix []byte
+		typ    TxType
+	}{
+		{commitPrefix, TxCommit},
+		{revealPrefix, TxReveal},
+	} {
+		if !bytes.HasPrefix(tx, p.prefix) {
+			continue
+		}
+		parts := bytes.SplitN(tx[len(p.prefix):], []byte("="), 2)
+		if len(parts) != 2 {
+			return TxUnknown, nil, nil
+		}
+		return p.typ, parts[0], parts[1]
+	}
+	return TxUnknown, nil, nil
+}
+
+// commitKey namespaces commitment entries so they never collide with final values.
+func commitKey(key []byte) []byte {
+	return append([]byte("commit/"), key...)
+}
+
+// hash returns the sha256 digest of b, used as the commitment payload.
+func hash(b []byte) []byte {
+	h := sha256.Sum256(b)
+	return h[:]
+}
 
 type MyApp struct {
 	db           *badger.DB
@@ -73,21 +124,26 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 
 	m.onGoingBlock = m.db.NewTransaction(true)
 	for i, tx := range block.Txs {
-		if code := m.isValid(tx); code != 0 {
-			log.Printf("Error: invalid transaction index %v", i)
-			tsx[i] = &abcitypes.ExecTxResult{Code: code}
-		} else {
-			parts := bytes.SplitN(tx, []byte("="), 2)
-			key, value := parts[0], parts[1]
-			log.Printf("Adding key (%s) with value (%s)", key, value)
-
-			if err := m.onGoingBlock.Set(key, value); err != nil {
-				log.Panicf("Error writing to database, unable to execute tx: %v", err)
-			}
-
-			log.Printf("Successivly added key (%s) with val (%s) do databse", key, value)
-			tsx[i] = &abcitypes.ExecTxResult{Info: "hola hola!"}
+		typ, key, payload := parseTx(tx)
+		var err error
+		switch typ {
+		case TxCommit:
+			log.Printf("CommitTx: committing hash for key (%s)", key)
+			err = m.onGoingBlock.Set(commitKey(key), payload)
+		case TxReveal:
+			log.Printf("RevealTx: revealing value for key (%s)", key)
+			err = m.processReveal(m.onGoingBlock, key, payload)
+		default:
+			err = errors.New("unknown or malformed transaction")
 		}
+		if err != nil {
+			log.Printf("Error: invalid transaction index %v: %v", i, err)
+			tsx[i] = &abcitypes.ExecTxResult{Code: 1}
+			continue
+		}
+
+		log.Printf("Successivly added key (%s)", key)
+		tsx[i] = &abcitypes.ExecTxResult{Info: "hola hola!"}
 	}
 
 	return &abcitypes.ResponseFinalizeBlock{TxResults: tsx}, nil
@@ -139,9 +195,37 @@ func NewMyApp(db *badger.DB) *MyApp {
 }
 
 func (app *MyApp) isValid(tx []byte) uint32 {
-	parts := bytes.Split(tx, []byte("="))
-	if len(parts) != 2 {
+	typ, _, payload := parseTx(tx)
+	if typ == TxUnknown || len(payload) == 0 {
 		return 1
 	}
 	return 0
+}
+
+// processReveal verifies a reveal against the stored commitment and, on match,
+// stores the final value. The commitment is deliberately kept (not consumed) so
+// it stays verifiable afterward: anyone can re-check that hash(value) equals the
+// published commitment.
+func (m *MyApp) processReveal(txn *badger.Txn, key, value []byte) error {
+	ckey := commitKey(key)
+	var stored []byte
+	item, err := txn.Get(ckey)
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return errors.New("reveal without a prior commit")
+		}
+		return err
+	}
+	if err := item.Value(func(val []byte) error {
+		stored = append([]byte(nil), val...)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if !bytes.Equal(hash(value), stored) {
+		return errors.New("reveal does not match the committed hash")
+	}
+
+	return txn.Set(key, value)
 }

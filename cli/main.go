@@ -1,4 +1,4 @@
-// Command cli is a tiny command-line client for the mystore commit/reveal ABCI
+// Command cli is a tiny command-line client for the sealstore commit/reveal ABCI
 // app. It talks to the running CometBFT node via the official RPC client.
 //
 // Usage:
@@ -271,7 +271,7 @@ func (c *Cli) readlineRepl() error {
 		rl.SaveHistory(l)
 	}
 
-	fmt.Printf("mystore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, health, history, help, exit.\n", c.rpcAddr)
+	fmt.Printf("sealstore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, health, history, help, exit.\n", c.rpcAddr)
 	for {
 		line, err := rl.Readline()
 		if err == io.EOF {
@@ -298,7 +298,7 @@ func (c *Cli) readlineRepl() error {
 // plainRepl reads commands line-by-line without editing (used when input is
 // piped, e.g. in tests or scripts).
 func (c *Cli) plainRepl() error {
-	fmt.Printf("mystore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, health, history, help, exit.\n", c.rpcAddr)
+	fmt.Printf("sealstore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, health, history, help, exit.\n", c.rpcAddr)
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -339,9 +339,9 @@ func historyPath() string {
 		return p
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".mystore-cli", "history")
+		return filepath.Join(home, ".sealstore-cli", "history")
 	}
-	return ".mystore-cli-history"
+	return ".sealstore-cli-history"
 }
 
 // record appends a command line to the history file.

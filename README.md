@@ -29,11 +29,11 @@ Anything else — or a reveal with no/mismatched commit — is rejected (ABCI co
 
 ```bash
 # 1. build the ABCI app + CLI
-go build -o mystore . && go build -o mystore-cli ./cli
+go build -o sealstore . && go build -o sealstore-cli ./cli
 
 # 2. init & start the node (do init once)
 cometbft init --home /tmp/cometbft-home
-./mystore -kv-home $HOME/.kvstore
+./sealstore -kv-home $HOME/.kvstore
 cometbft node --home /tmp/cometbft-home --proxy_app=unix:///tmp/example.sock
 ```
 
@@ -44,10 +44,10 @@ The node RPC is then at `localhost:26657`.
 **One user (quick path):**
 
 ```bash
-./mystore-cli health
-./mystore-cli set city paris          # commit + reveal in one
-./mystore-cli get city                # → paris
-./mystore-cli getcommit city          # → the stored seal (sha256 hex)
+./sealstore-cli health
+./sealstore-cli set city paris          # commit + reveal in one
+./sealstore-cli get city                # → paris
+./sealstore-cli getcommit city          # → the stored seal (sha256 hex)
 ```
 
 **Two users — see the secrecy in action (e.g. a sealed bid):**
@@ -55,22 +55,22 @@ The node RPC is then at `localhost:26657`.
 Alice seals a bid (only the hash is published — the value stays hidden):
 
 ```bash
-./mystore-cli commit bid1 100         # Alice: seal sha256("100")
+./sealstore-cli commit bid1 100         # Alice: seal sha256("100")
 # → "bid1": commitment = sha256("100") = <hex>
 ```
 
 Bob, watching the chain, can see the seal but *not* the value:
 
 ```bash
-./mystore-cli getcommit bid1          # Bob: sees only the seal → <hex>
-./mystore-cli get bid1                # Bob: "key does not exist" (value hidden)
+./sealstore-cli getcommit bid1          # Bob: sees only the seal → <hex>
+./sealstore-cli get bid1                # Bob: "key does not exist" (value hidden)
 ```
 
 Alice opens the seal by revealing the value (verified against it):
 
 ```bash
-./mystore-cli reveal bid1 100         # Alice: opens it
-./mystore-cli get bid1                # Bob, now: → 100
+./sealstore-cli reveal bid1 100         # Alice: opens it
+./sealstore-cli get bid1                # Bob, now: → 100
 ```
 
 Bob can independently verify: `sha256("100")` must equal the seal he saw earlier
