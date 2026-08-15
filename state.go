@@ -61,6 +61,10 @@ func hash(b []byte) []byte {
 }
 
 type MyApp struct {
+	// BaseApplication provides no-op defaults for mempool-connection ABCI
+	// methods (InsertTx, ReapTxs) that this app doesn't customise.
+	abcitypes.BaseApplication
+
 	db           *badger.DB
 	onGoingBlock *badger.Txn
 }
@@ -191,7 +195,10 @@ func (m *MyApp) ApplySnapshotChunk(ctx context.Context, chunk *abcitypes.Request
 var _ abcitypes.Application = (*MyApp)(nil)
 
 func NewMyApp(db *badger.DB) *MyApp {
-	return &MyApp{db, nil}
+	return &MyApp{
+		db:           db,
+		onGoingBlock: nil,
+	}
 }
 
 func (app *MyApp) isValid(tx []byte) uint32 {

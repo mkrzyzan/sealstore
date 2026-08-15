@@ -23,7 +23,7 @@ Anything else — or a reveal with no/mismatched commit — is rejected (ABCI co
 ## 📦 Requirements
 
 - Go 1.25+
-- `cometbft` (pure Go): `go install github.com/cometbft/cometbft/cmd/cometbft@v0.38.0`
+- `cometbft` (pure Go): `go install github.com/cometbft/cometbft/cmd/cometbft@v0.40.0`
 
 ## 🚀 Build & run (pure Go, no Docker)
 

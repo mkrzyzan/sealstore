@@ -1,0 +1,22 @@
+# Build artifacts
+/sealstore
+/sealstore-cli
+*.test
+*.out
+
+# Go module build cache (if populated) only when in-repo
+/vendor/
+
+# IDE
+/.idea/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Claude Code — keep project settings tracked, ignore local machine override
+/.claude/settings.local.json
+
+# CLI history fallback files (created in cwd only if no home dir)
+.mystore-cli-history
+.sealstore-cli-history
