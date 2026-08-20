@@ -9,45 +9,9 @@ import (
 
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	"github.com/dgraph-io/badger/v3"
+
+	"sealstore/tx"
 )
-
-// TxType distinguishes the two transaction kinds handled by MyApp.
-type TxType uint8
-
-const (
-	TxUnknown TxType = iota
-	TxCommit
-	TxReveal
-)
-
-var (
-	commitPrefix = []byte("commit=")
-	revealPrefix = []byte("reveal=")
-)
-
-// parseTx classifies a raw transaction and extracts its key and payload.
-// CommitTx wire format:  commit=key=hash
-// RevealTx wire format:  reveal=key=value
-// An empty, wrongly-prefixed, or payload-less tx yields TxUnknown.
-func parseTx(tx []byte) (typ TxType, key, payload []byte) {
-	for _, p := range []struct {
-		prefix []byte
-		typ    TxType
-	}{
-		{commitPrefix, TxCommit},
-		{revealPrefix, TxReveal},
-	} {
-		if !bytes.HasPrefix(tx, p.prefix) {
-			continue
-		}
-		parts := bytes.SplitN(tx[len(p.prefix):], []byte("="), 2)
-		if len(parts) != 2 {
-			return TxUnknown, nil, nil
-		}
-		return p.typ, parts[0], parts[1]
-	}
-	return TxUnknown, nil, nil
-}
 
 // commitKey namespaces commitment entries so they never collide with final values.
 func commitKey(key []byte) []byte {
@@ -127,18 +91,25 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 	var tsx = make([]*abcitypes.ExecTxResult, len(block.Txs))
 
 	m.onGoingBlock = m.db.NewTransaction(true)
-	for i, tx := range block.Txs {
-		typ, key, payload := parseTx(tx)
+	for i, rawTx := range block.Txs {
+		msg, perr := tx.Parse(rawTx)
+		var key []byte
 		var err error
-		switch typ {
-		case TxCommit:
-			log.Printf("CommitTx: committing hash for key (%s)", key)
-			err = m.onGoingBlock.Set(commitKey(key), payload)
-		case TxReveal:
-			log.Printf("RevealTx: revealing value for key (%s)", key)
-			err = m.processReveal(m.onGoingBlock, key, payload)
-		default:
+		if perr != nil {
 			err = errors.New("unknown or malformed transaction")
+		} else {
+			switch mt := msg.(type) {
+			case *tx.CommitTx:
+				key = mt.Key
+				log.Printf("CommitTx: committing hash for key (%s)", key)
+				err = m.onGoingBlock.Set(commitKey(mt.Key), mt.Hash[:])
+			case *tx.RevealTx:
+				key = mt.Key
+				log.Printf("RevealTx: revealing value for key (%s)", key)
+				err = m.processReveal(m.onGoingBlock, mt.Key, mt.Value)
+			default:
+				err = errors.New("unknown or malformed transaction")
+			}
 		}
 		if err != nil {
 			log.Printf("Error: invalid transaction index %v: %v", i, err)
@@ -201,9 +172,15 @@ func NewMyApp(db *badger.DB) *MyApp {
 	}
 }
 
-func (app *MyApp) isValid(tx []byte) uint32 {
-	typ, _, payload := parseTx(tx)
-	if typ == TxUnknown || len(payload) == 0 {
+func (app *MyApp) isValid(rawTx []byte) uint32 {
+	msg, err := tx.Parse(rawTx)
+	if err != nil {
+		return 1
+	}
+	// A reveal of an empty value carries no information; reject it at the
+	// mempool just like the old string format did. A commit always carries a
+	// 32-byte hash, so it is never rejected for an empty payload.
+	if r, ok := msg.(*tx.RevealTx); ok && len(r.Value) == 0 {
 		return 1
 	}
 	return 0

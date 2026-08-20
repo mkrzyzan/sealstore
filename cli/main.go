@@ -31,6 +31,8 @@ import (
 	cmtclient "github.com/cometbft/cometbft/rpc/client"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cometbft/cometbft/types"
+
+	"sealstore/tx"
 )
 
 func main() {
@@ -168,11 +170,11 @@ func (c *Cli) Set(key, value string) error {
 	return nil
 }
 
-// Commit publishes the commitment for a value: commit=<key>=sha256(value).
+// Commit publishes the commitment for a value.
 func (c *Cli) Commit(key, value string) error {
 	sum := sha256.Sum256([]byte(value))
-	tx := append([]byte("commit="+key+"="), sum[:]...)
-	if err := c.broadcast(types.Tx(tx)); err != nil {
+	msg := &tx.CommitTx{Key: []byte(key), Hash: sum}
+	if err := c.broadcast(types.Tx(msg.Marshal())); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	fmt.Printf("%q: commitment = sha256(%q) = %s\n", key, value, hex.EncodeToString(sum[:]))
@@ -181,7 +183,8 @@ func (c *Cli) Commit(key, value string) error {
 
 // Reveal publishes the value and is verified against the stored commitment.
 func (c *Cli) Reveal(key, value string) error {
-	if err := c.broadcast(types.Tx([]byte("reveal=" + key + "=" + value))); err != nil {
+	msg := &tx.RevealTx{Key: []byte(key), Value: []byte(value)}
+	if err := c.broadcast(types.Tx(msg.Marshal())); err != nil {
 		return fmt.Errorf("reveal: %w", err)
 	}
 	fmt.Printf("%q = %q (verified against commitment)\n", key, value)

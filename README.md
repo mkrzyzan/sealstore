@@ -13,12 +13,25 @@ private voting, or unbiasable randomness.
 
 ## ⚙️ How it works
 
-Two transaction types:
+Two transaction types, sent as **pure binary** structures marshaled with Go's
+`encoding/binary` package (defined in [`tx/`](tx/)):
 
-- `commit=<key>=<raw sha256(value)>` — store the commitment (kept afterward for verification)
-- `reveal=<key>=<value>` — accepted only if `sha256(value)` matches the seal
+```
+CommitTx:  0x01 | uvarint(len(key)) | key | 32 raw sha256(value) bytes
+RevealTx:  0x02 | uvarint(len(key)) | key | uvarint(len(value)) | value
+```
+
+The leading byte is the type tag, multi-byte lengths are uvarints, and the commit
+hash is a raw 32-byte array (so the format is byte-order independent).
+
+- **commit** — store the commitment (kept afterward for verification)
+- **reveal** — accepted only if `sha256(value)` matches the seal
 
 Anything else — or a reveal with no/mismatched commit — is rejected (ABCI code 1).
+
+> ⚠️ **Breaking change:** the wire format is now binary. Transactions serialized
+> in the old `commit=<key>=<hash>` / `reveal=<key>=<value>` string format are
+> rejected.
 
 ## 📦 Requirements
 
