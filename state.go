@@ -13,15 +13,16 @@ import (
 	"sealstore/tx"
 )
 
-// commitKey namespaces commitment entries so they never collide with final values.
-func commitKey(key []byte) []byte {
-	return append([]byte("commit/"), key...)
-}
-
-// hash returns the sha256 digest of b, used as the commitment payload.
+// hash returns the sha256 digest of b — the generic chain primitive. The
+// account scheme reuses it for commitment payloads and the spend-secret check.
 func hash(b []byte) []byte {
 	h := sha256.Sum256(b)
 	return h[:]
+}
+
+// commitKey namespaces commitment entries so they never collide with final values.
+func commitKey(key []byte) []byte {
+	return append([]byte("commit/"), key...)
 }
 
 type MyApp struct {
@@ -72,7 +73,11 @@ func (m *MyApp) CheckTx(ctx context.Context, tx *abcitypes.RequestCheckTx) (*abc
 }
 
 func (m *MyApp) InitChain(ctx context.Context, chain *abcitypes.RequestInitChain) (*abcitypes.ResponseInitChain, error) {
-	//TODO implement me
+	// Pre-credit the accounts named in the cometbft genesis app_state. Runs
+	// once on a fresh chain; an absent app_state is a no-op.
+	if err := m.applyGenesis(chain.AppStateBytes); err != nil {
+		return nil, err
+	}
 	return &abcitypes.ResponseInitChain{}, nil
 }
 
@@ -87,10 +92,18 @@ func (m *MyApp) ProcessProposal(ctx context.Context, proposal *abcitypes.Request
 }
 
 func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinalizeBlock) (*abcitypes.ResponseFinalizeBlock, error) {
-	//TODO implement me
 	var tsx = make([]*abcitypes.ExecTxResult, len(block.Txs))
 
 	m.onGoingBlock = m.db.NewTransaction(true)
+
+	// Block clock (for commitment expiry): read the current height before any
+	// tx runs so all expiry checks in this block agree on the same value.
+	hcur, err := height(m.onGoingBlock)
+	if err != nil {
+		log.Printf("Error: reading height: %v", err)
+		hcur = 0
+	}
+
 	for i, rawTx := range block.Txs {
 		msg, perr := tx.Parse(rawTx)
 		var key []byte
@@ -107,6 +120,12 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 				key = mt.Key
 				log.Printf("RevealTx: revealing value for key (%s)", key)
 				err = m.processReveal(m.onGoingBlock, mt.Key, mt.Value)
+			case *tx.PayCommitTx:
+				log.Printf("PayCommitTx: committing payment for account (%s)", mt.Acct)
+				err = m.processPayCommit(m.onGoingBlock, mt)
+			case *tx.PayRevealTx:
+				log.Printf("PayRevealTx: revealing payment for account (%s)", mt.Body.From)
+				err = m.processPayReveal(m.onGoingBlock, mt)
 			default:
 				err = errors.New("unknown or malformed transaction")
 			}
@@ -119,6 +138,11 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 
 		log.Printf("Successivly added key (%s)", key)
 		tsx[i] = &abcitypes.ExecTxResult{Info: "hola hola!"}
+	}
+
+	// Advance the block clock so the next block's expiry checks see hcur+1.
+	if err := bumpHeight(m.onGoingBlock, hcur); err != nil {
+		log.Printf("Error: writing height: %v", err)
 	}
 
 	return &abcitypes.ResponseFinalizeBlock{TxResults: tsx}, nil
