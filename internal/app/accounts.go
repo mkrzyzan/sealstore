@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,13 @@ import (
 
 	"sealstore/internal/tx"
 )
+
+// hash returns the sha256 digest of b — the generic chain primitive. The
+// account scheme uses it for commitment payloads and the spend-secret check.
+func hash(b []byte) []byte {
+	h := sha256.Sum256(b)
+	return h[:]
+}
 
 // ---- on-chain account state ----
 //

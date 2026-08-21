@@ -1,15 +1,16 @@
 // Package tx defines the binary wire format for SealStore transactions.
 //
-// SealStore's commit/reveal transactions are transmitted as typed structs
-// marshaled to a pure binary form with the standard library's encoding/binary
-// package. This package is the single source of truth for that format, shared
-// by the ABCI app (state.go) and the CLI (cli/main.go).
+// SealStore's signatureless-payment transactions are transmitted as typed
+// structs marshaled to a pure binary form with the standard library's
+// encoding/binary package. This package is the single source of truth for that
+// format, shared by the ABCI app (state.go/accounts.go) and the CLI
+// (cmd/sealstore-cli/main.go).
 //
-// Layout (all multi-byte lengths are uvarints; the hash is a raw byte array,
+// Layout (all multi-byte lengths are uvarints; the hashes are raw byte arrays,
 // so there is no endianness in play):
 //
-//	CommitTx:  Tag(1) | uvarint(len(key)) | key | 32 raw hash bytes
-//	RevealTx:  Tag(1) | uvarint(len(key)) | key | uvarint(len(value)) | value
+//	PayCommitTx: Tag(1) | uvarint(len(acct)) | acct | 32 raw C bytes | uvarint(t_expire) | uvarint(fee)
+//	PayRevealTx: Tag(1) | Payment body | 32 raw PNext bytes | 32 raw N bytes | uvarint(t_expire) | 32 raw RCurrent bytes
 package tx
 
 import (
@@ -24,10 +25,10 @@ import (
 type TxType uint8
 
 const (
-	TxUnknown TxType = iota
-	TxCommit
-	TxReveal
-	TxTransfer // reserved: the standalone transfer tx was removed; funds move only via pay_commit/pay_reveal
+	TxUnknown  TxType = iota
+	TxCommit          // reserved: the plain key/value seal tx was removed; the chain is payments-only
+	TxReveal          // reserved: the plain key/value seal tx was removed; the chain is payments-only
+	TxTransfer        // reserved: the standalone transfer tx was removed; funds move only via pay_commit/pay_reveal
 	TxPayCommit
 	TxPayReveal
 )
@@ -39,43 +40,6 @@ const hashLen = 32
 type Message interface {
 	Type() TxType
 	Marshal() []byte
-}
-
-// CommitTx publishes a commitment: Hash is the raw sha256 digest of the value.
-type CommitTx struct {
-	Key  []byte
-	Hash [32]byte
-}
-
-func (m *CommitTx) Type() TxType { return TxCommit }
-
-func (m *CommitTx) Marshal() []byte {
-	buf := make([]byte, 1+binary.MaxVarintLen64+len(m.Key)+hashLen)
-	n := 1
-	buf[0] = byte(TxCommit)
-	n += binary.PutUvarint(buf[n:], uint64(len(m.Key)))
-	n += copy(buf[n:], m.Key)
-	n += copy(buf[n:], m.Hash[:])
-	return buf[:n]
-}
-
-// RevealTx opens a commitment: Value must hash to the stored CommitTx.Hash.
-type RevealTx struct {
-	Key   []byte
-	Value []byte
-}
-
-func (m *RevealTx) Type() TxType { return TxReveal }
-
-func (m *RevealTx) Marshal() []byte {
-	buf := make([]byte, 1+2*binary.MaxVarintLen64+len(m.Key)+len(m.Value))
-	n := 1
-	buf[0] = byte(TxReveal)
-	n += binary.PutUvarint(buf[n:], uint64(len(m.Key)))
-	n += copy(buf[n:], m.Key)
-	n += binary.PutUvarint(buf[n:], uint64(len(m.Value)))
-	n += copy(buf[n:], m.Value)
-	return buf[:n]
 }
 
 // ---- signatureless payment scheme (accounts) ----
@@ -153,10 +117,6 @@ func Parse(raw []byte) (Message, error) {
 		return nil, errors.New("tx: empty transaction")
 	}
 	switch TxType(raw[0]) {
-	case TxCommit:
-		return parseCommit(raw[1:])
-	case TxReveal:
-		return parseReveal(raw[1:])
 	case TxPayCommit:
 		return parsePayCommit(raw[1:])
 	case TxPayReveal:
@@ -164,31 +124,6 @@ func Parse(raw []byte) (Message, error) {
 	default:
 		return nil, fmt.Errorf("tx: unknown type tag %d", raw[0])
 	}
-}
-
-func parseCommit(b []byte) (*CommitTx, error) {
-	key, rest, err := readBytes(b)
-	if err != nil {
-		return nil, err
-	}
-	if len(rest) != hashLen {
-		return nil, fmt.Errorf("tx: commit hash is %d bytes, want %d", len(rest), hashLen)
-	}
-	var h [32]byte
-	copy(h[:], rest)
-	return &CommitTx{Key: key, Hash: h}, nil
-}
-
-func parseReveal(b []byte) (*RevealTx, error) {
-	key, rest, err := readBytes(b)
-	if err != nil {
-		return nil, err
-	}
-	value, _, err := readBytes(rest)
-	if err != nil {
-		return nil, err
-	}
-	return &RevealTx{Key: key, Value: value}, nil
 }
 
 func parsePayCommit(b []byte) (*PayCommitTx, error) {

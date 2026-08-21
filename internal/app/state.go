@@ -1,9 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"log"
 
@@ -12,18 +10,6 @@ import (
 
 	"sealstore/internal/tx"
 )
-
-// hash returns the sha256 digest of b — the generic chain primitive. The
-// account scheme reuses it for commitment payloads and the spend-secret check.
-func hash(b []byte) []byte {
-	h := sha256.Sum256(b)
-	return h[:]
-}
-
-// commitKey namespaces commitment entries so they never collide with final values.
-func commitKey(key []byte) []byte {
-	return append([]byte("commit/"), key...)
-}
 
 type MyApp struct {
 	// BaseApplication provides no-op defaults for mempool-connection ABCI
@@ -106,20 +92,11 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 
 	for i, rawTx := range block.Txs {
 		msg, perr := tx.Parse(rawTx)
-		var key []byte
 		var err error
 		if perr != nil {
 			err = errors.New("unknown or malformed transaction")
 		} else {
 			switch mt := msg.(type) {
-			case *tx.CommitTx:
-				key = mt.Key
-				log.Printf("CommitTx: committing hash for key (%s)", key)
-				err = m.onGoingBlock.Set(commitKey(mt.Key), mt.Hash[:])
-			case *tx.RevealTx:
-				key = mt.Key
-				log.Printf("RevealTx: revealing value for key (%s)", key)
-				err = m.processReveal(m.onGoingBlock, mt.Key, mt.Value)
 			case *tx.PayCommitTx:
 				log.Printf("PayCommitTx: committing payment for account (%s)", mt.Acct)
 				err = m.processPayCommit(m.onGoingBlock, mt)
@@ -136,7 +113,7 @@ func (m *MyApp) FinalizeBlock(ctx context.Context, block *abcitypes.RequestFinal
 			continue
 		}
 
-		log.Printf("Successivly added key (%s)", key)
+		log.Printf("Accepted transaction index %v", i)
 		tsx[i] = &abcitypes.ExecTxResult{Info: "hola hola!"}
 	}
 
@@ -197,43 +174,8 @@ func SealstoreAbciApp(db *badger.DB) *MyApp {
 }
 
 func (app *MyApp) isValid(rawTx []byte) uint32 {
-	msg, err := tx.Parse(rawTx)
-	if err != nil {
-		return 1
-	}
-	// A reveal of an empty value carries no information; reject it at the
-	// mempool just like the old string format did. A commit always carries a
-	// 32-byte hash, so it is never rejected for an empty payload.
-	if r, ok := msg.(*tx.RevealTx); ok && len(r.Value) == 0 {
+	if _, err := tx.Parse(rawTx); err != nil {
 		return 1
 	}
 	return 0
-}
-
-// processReveal verifies a reveal against the stored commitment and, on match,
-// stores the final value. The commitment is deliberately kept (not consumed) so
-// it stays verifiable afterward: anyone can re-check that hash(value) equals the
-// published commitment.
-func (m *MyApp) processReveal(txn *badger.Txn, key, value []byte) error {
-	ckey := commitKey(key)
-	var stored []byte
-	item, err := txn.Get(ckey)
-	if err != nil {
-		if err == badger.ErrKeyNotFound {
-			return errors.New("reveal without a prior commit")
-		}
-		return err
-	}
-	if err := item.Value(func(val []byte) error {
-		stored = append([]byte(nil), val...)
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	if !bytes.Equal(hash(value), stored) {
-		return errors.New("reveal does not match the committed hash")
-	}
-
-	return txn.Set(key, value)
 }

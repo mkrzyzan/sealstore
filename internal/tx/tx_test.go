@@ -7,64 +7,6 @@ import (
 	"testing"
 )
 
-func TestRoundTripCommit(t *testing.T) {
-	var h [32]byte
-	for i := range h {
-		h[i] = byte(i)
-	}
-	in := &CommitTx{Key: []byte("key1"), Hash: h}
-	out, err := Parse(in.Marshal())
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	got, ok := out.(*CommitTx)
-	if !ok {
-		t.Fatalf("Parse returned %T, want *CommitTx", out)
-	}
-	if got.Type() != TxCommit {
-		t.Errorf("Type() = %d, want %d", got.Type(), TxCommit)
-	}
-	if !bytes.Equal(got.Key, in.Key) {
-		t.Errorf("Key = %q, want %q", got.Key, in.Key)
-	}
-	if !bytes.Equal(got.Hash[:], in.Hash[:]) {
-		t.Errorf("Hash = %x, want %x", got.Hash, in.Hash)
-	}
-}
-
-func TestRoundTripReveal(t *testing.T) {
-	in := &RevealTx{Key: []byte("key2"), Value: []byte("value")}
-	out, err := Parse(in.Marshal())
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	got, ok := out.(*RevealTx)
-	if !ok {
-		t.Fatalf("Parse returned %T, want *RevealTx", out)
-	}
-	if got.Type() != TxReveal {
-		t.Errorf("Type() = %d, want %d", got.Type(), TxReveal)
-	}
-	if !bytes.Equal(got.Key, in.Key) {
-		t.Errorf("Key = %q, want %q", got.Key, in.Key)
-	}
-	if !bytes.Equal(got.Value, in.Value) {
-		t.Errorf("Value = %q, want %q", got.Value, in.Value)
-	}
-}
-
-func TestRoundTripEmptyKey(t *testing.T) {
-	// An empty key is allowed (parity with the old string format's commit==hash).
-	in := &CommitTx{Key: nil, Hash: [32]byte{1}}
-	out, err := Parse(in.Marshal())
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if got, ok := out.(*CommitTx); !ok || len(got.Key) != 0 {
-		t.Fatalf("Parse returned %#v, want an empty-key CommitTx", out)
-	}
-}
-
 func TestParseEmpty(t *testing.T) {
 	for _, raw := range [][]byte{nil, {}} {
 		if _, err := Parse(raw); err == nil {
@@ -80,32 +22,24 @@ func TestParseUnknownTag(t *testing.T) {
 }
 
 func TestParseTruncatedVarint(t *testing.T) {
-	// Key length prefix sets the continuation bit but is never completed.
-	if _, err := Parse([]byte{byte(TxCommit), 0x80}); err == nil {
+	// Acct length prefix sets the continuation bit but is never completed.
+	if _, err := Parse([]byte{byte(TxPayCommit), 0x80}); err == nil {
 		t.Error("Parse with truncated length prefix succeeded, want error")
 	}
 }
 
 func TestParseLengthExceedsData(t *testing.T) {
-	// Declared key length 5, but only 3 bytes follow the prefix.
-	if _, err := Parse([]byte{byte(TxCommit), 0x05, 'k', 'e', 'y'}); err == nil {
+	// Declared acct length 5, but only 3 bytes follow the prefix.
+	if _, err := Parse([]byte{byte(TxPayCommit), 0x05, 'k', 'e', 'y'}); err == nil {
 		t.Error("Parse with over-long length prefix succeeded, want error")
 	}
 }
 
-func TestParseCommitWrongHashLen(t *testing.T) {
-	// Valid key, but 35 trailing bytes instead of the required 32.
-	raw := append([]byte{byte(TxCommit), 0x01, 'k'}, make([]byte, 35)...)
+func TestParsePayCommitShortHash(t *testing.T) {
+	// Valid acct, but only 31 trailing bytes for the 32-byte commitment C.
+	raw := append([]byte{byte(TxPayCommit), 0x01, 'k'}, make([]byte, 31)...)
 	if _, err := Parse(raw); err == nil {
-		t.Error("Parse with 35-byte commit hash succeeded, want error")
-	}
-}
-
-func TestParseCommitShortHash(t *testing.T) {
-	// Valid key, but only 31 trailing bytes for the hash.
-	raw := append([]byte{byte(TxCommit), 0x01, 'k'}, make([]byte, 31)...)
-	if _, err := Parse(raw); err == nil {
-		t.Error("Parse with 31-byte commit hash succeeded, want error")
+		t.Error("Parse with truncated pay commit hash succeeded, want error")
 	}
 }
 
@@ -114,9 +48,19 @@ func TestParseOverflowVarint(t *testing.T) {
 	// reports it with a negative byte count, which readBytes must reject.
 	prefix := bytes.Repeat([]byte{0xff}, 9)
 	prefix = append(prefix, 0x02)
-	raw := append([]byte{byte(TxCommit)}, prefix...)
+	raw := append([]byte{byte(TxPayCommit)}, prefix...)
 	if _, err := Parse(raw); err == nil {
 		t.Error("Parse with overflowing length prefix succeeded, want error")
+	}
+}
+
+func TestParseRemovedTagsRejected(t *testing.T) {
+	// The seal (commit/reveal) and standalone-transfer tags are reserved: bytes
+	// carrying them must fail Parse as unknown tags.
+	for _, tag := range []TxType{TxCommit, TxReveal, TxTransfer} {
+		if _, err := Parse([]byte{byte(tag), 0x01, 'k'}); err == nil {
+			t.Errorf("Parse with removed tag %d succeeded, want error", tag)
+		}
 	}
 }
 

@@ -1,7 +1,8 @@
-# 🔐 SealStore — a commit‑reveal key/value chain (CometBFT)
+# 🔐 SealStore — a signatureless payments chain (CometBFT)
 
-A sovereign CometBFT blockchain that stores key/value data in a **commit‑reveal**
-scheme: nothing is revealed until its hash has been committed first.
+A sovereign CometBFT blockchain where every payment is authorised by a **hash
+preimage** instead of a signature: a spend is a commit‑reveal over the payment
+body and a rotating spend secret, so no key is ever exposed.
 
 ## 🤔 What problem it solves
 
@@ -11,9 +12,6 @@ every exposed key is a future forged spend. SealStore removes the signature
 P`), so only sha256 stands between an attacker and the funds, and quantum
 computers merely halve hash strength (Grover), they don't break it. Revealed
 secrets burn on use (`P` rotates): nothing reusable is ever exposed.
-
-The same seal/open primitive also keeps values out of the mempool — for
-sealed‑bid auctions, private voting, or unbiasable randomness.
 
 ## ⚙️ How it works
 
@@ -35,10 +33,6 @@ Two phases, because once `R_current` is visible a miner could substitute a
 different payment — the commitment `C` binds the payment body and rotation
 target before the secret is out
 ([full spec](docs/signatureless-commit-reveal.md)).
-
-The same commit–reveal primitive also seals plain key/value data
-(`0x01 CommitTx` / `0x02 RevealTx`: publish `sha256(value)`, reveal later
-against the stored seal).
 
 ### 🆚 vs ECDSA-signature payments
 
@@ -100,14 +94,14 @@ The node RPC is then at `localhost:26657`.
 ./sealstore-cli wallet                           # create a wallet (random seed)
 ./sealstore-cli transfer addr1 addr2 1 2 1000    # commit + reveal in one
 ./sealstore-cli account addr1                    # → balance, seq, P
-./sealstore-cli getcommit city                   # → the stored seal (sha256 hex)
 ```
 
 ## 💸 Signatureless payments (accounts)
 
-A second scheme (see [`docs/signatureless-commit-reveal.md`](docs/signatureless-commit-reveal.md))
-authorises payments by **hash preimage only** — no signatures. Accounts hold
-`{balance, seq, P}`; spending rotates `P` and burns the revealed secret.
+Payments are authorised by **hash preimage only** — no signatures (see
+[`docs/signatureless-commit-reveal.md`](docs/signatureless-commit-reveal.md)).
+Accounts hold `{balance, seq, P}`; spending rotates `P` and burns the revealed
+secret.
 
 **The address is the first hash.** A public address is exactly 64 hex chars —
 `Hash(R_0)`, the first hash of the wallet's secret chain. The address *is* the
@@ -160,9 +154,6 @@ Or drive the two phases by hand:
 A commit that expires (no reveal before `t_expire`) is dead: its fee stays
 burned and the next `pay_commit` overrides it — the CLI clears the local
 pending state automatically once the chain no longer honours it.
-
-Replaying the reveal, reusing the old secret, or substituting the payee all
-fail — the commitment is consumed and `P` has rotated.
 
 Replaying the reveal, reusing the old secret, or substituting the payee all
 fail — the commitment is consumed and `P` has rotated.

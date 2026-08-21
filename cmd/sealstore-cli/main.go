@@ -1,16 +1,11 @@
 // Command sealstore-cli is a tiny command-line client for the sealstore
-// commit/reveal ABCI app. It talks to the running CometBFT node via the
-// official RPC client.
+// signatureless-payments ABCI app. It talks to the running CometBFT node via
+// the official RPC client.
 //
 // Usage:
 //
 //	cli                       # interactive REPL (up/down arrow recall)
 //	cli health                # one-shot command
-//	cli set <key> <value>     # commit then reveal
-//	cli commit <key> <value>  # publish sha256(value) as the commitment
-//	cli reveal <key> <value>  # reveal value (verified against the commit)
-//	cli get <key>             # read the revealed value
-//	cli getcommit <key>       # read the stored commitment (sha256 hex)
 //	cli history
 //
 // Signatureless payment scheme:
@@ -91,7 +86,7 @@ func New(rpcAddr string) (*Cli, error) {
 }
 
 // Run is the entry point. With no arguments it starts an interactive REPL;
-// with arguments it runs those commands once (e.g. "set k v", "get k",
+// with arguments it runs those commands once (e.g. "wallet", "transfer a b 10 1 1000",
 // "health", "history").
 func Run(args []string) error {
 	c, err := New("")
@@ -129,39 +124,6 @@ func (c *Cli) handle(line string) error {
 			return err
 		}
 		fmt.Println("ok")
-	case "set":
-		if len(fields) != 3 {
-			return fmt.Errorf("usage: set <key> <value>")
-		}
-		return c.Set(fields[1], fields[2])
-	case "commit":
-		if len(fields) != 3 {
-			return fmt.Errorf("usage: commit <key> <value>")
-		}
-		return c.Commit(fields[1], fields[2])
-	case "reveal":
-		if len(fields) != 3 {
-			return fmt.Errorf("usage: reveal <key> <value>")
-		}
-		return c.Reveal(fields[1], fields[2])
-	case "get":
-		if len(fields) != 2 {
-			return fmt.Errorf("usage: get <key>")
-		}
-		v, err := c.Get(fields[1])
-		if err != nil {
-			return err
-		}
-		fmt.Println(v)
-	case "getcommit":
-		if len(fields) != 2 {
-			return fmt.Errorf("usage: getcommit <key>")
-		}
-		v, err := c.GetCommit(fields[1])
-		if err != nil {
-			return err
-		}
-		fmt.Println(v)
 	case "wallet":
 		if len(fields) > 2 {
 			return fmt.Errorf("usage: wallet [seed|-]")
@@ -201,73 +163,6 @@ func optArg(fields []string, i int) string {
 		return fields[i]
 	}
 	return ""
-}
-
-// Set is a convenience that commits sha256(value) and then reveals value.
-func (c *Cli) Set(key, value string) error {
-	if err := c.Commit(key, value); err != nil {
-		return err
-	}
-	if err := c.Reveal(key, value); err != nil {
-		return err
-	}
-	stored, err := c.Get(key)
-	if err != nil {
-		return fmt.Errorf("verify: %w", err)
-	}
-	fmt.Printf("stored %q = %q\n", key, stored)
-	return nil
-}
-
-// Commit publishes the commitment for a value.
-func (c *Cli) Commit(key, value string) error {
-	sum := sha256.Sum256([]byte(value))
-	msg := &tx.CommitTx{Key: []byte(key), Hash: sum}
-	if err := c.broadcast(types.Tx(msg.Marshal())); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	fmt.Printf("%q: commitment = sha256(%q) = %s\n", key, value, hex.EncodeToString(sum[:]))
-	return nil
-}
-
-// Reveal publishes the value and is verified against the stored commitment.
-func (c *Cli) Reveal(key, value string) error {
-	msg := &tx.RevealTx{Key: []byte(key), Value: []byte(value)}
-	if err := c.broadcast(types.Tx(msg.Marshal())); err != nil {
-		return fmt.Errorf("reveal: %w", err)
-	}
-	fmt.Printf("%q = %q (verified against commitment)\n", key, value)
-	return nil
-}
-
-// Get returns the revealed value stored under key.
-func (c *Cli) Get(key string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	res, err := c.rpc.ABCIQuery(ctx, "", cmtbytes.HexBytes([]byte(key)))
-	if err != nil {
-		return "", err
-	}
-	if res.Response.Log != "exists" {
-		return "", fmt.Errorf("%s", res.Response.Log)
-	}
-	return string(res.Response.Value), nil
-}
-
-// GetCommit returns the stored commitment for key as a sha256 hex string.
-func (c *Cli) GetCommit(key string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	res, err := c.rpc.ABCIQuery(ctx, "", cmtbytes.HexBytes([]byte("commit/"+key)))
-	if err != nil {
-		return "", err
-	}
-	if res.Response.Log != "exists" {
-		return "", fmt.Errorf("%s", res.Response.Log)
-	}
-	return hex.EncodeToString(res.Response.Value), nil
 }
 
 // ---- signatureless payment scheme ----
@@ -714,7 +609,7 @@ func (c *Cli) readlineRepl() error {
 		rl.SaveHistory(l)
 	}
 
-	fmt.Printf("sealstore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, wallet, wallets, transfer, account, pay_commit, pay_reveal, health, history, help, exit.\n", c.rpcAddr)
+	fmt.Printf("sealstore cli (rpc: %s). Commands: wallet, wallets, transfer, account, pay_commit, pay_reveal, health, history, help, exit.\n", c.rpcAddr)
 	for {
 		line, err := rl.Readline()
 		if err == io.EOF {
@@ -741,7 +636,7 @@ func (c *Cli) readlineRepl() error {
 // plainRepl reads commands line-by-line without editing (used when input is
 // piped, e.g. in tests or scripts).
 func (c *Cli) plainRepl() error {
-	fmt.Printf("sealstore cli (rpc: %s). Commands: set, commit, reveal, get, getcommit, wallet, wallets, transfer, account, pay_commit, pay_reveal, health, history, help, exit.\n", c.rpcAddr)
+	fmt.Printf("sealstore cli (rpc: %s). Commands: wallet, wallets, transfer, account, pay_commit, pay_reveal, health, history, help, exit.\n", c.rpcAddr)
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -827,11 +722,6 @@ func (c *Cli) printHistory() error {
 
 func printHelp() {
 	fmt.Println("commands:")
-	fmt.Println("  set <key> <value>     commit then reveal")
-	fmt.Println("  commit <key> <value>  publish sha256(value) as the commitment")
-	fmt.Println("  reveal <key> <value>  reveal value (verified against the commit)")
-	fmt.Println("  get <key>             read the revealed value")
-	fmt.Println("  getcommit <key>       read the stored commitment (sha256 hex)")
 	fmt.Println("  wallet [seed|-]        create a wallet (random seed when omitted),")
 	fmt.Println("                        print its address (64 hex chars)")
 	fmt.Println("  wallets               list local wallets")
