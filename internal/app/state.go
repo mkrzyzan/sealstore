@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	"github.com/dgraph-io/badger/v3"
 
-	"sealstore/tx"
+	"sealstore/internal/tx"
 )
 
 // hash returns the sha256 digest of b — the generic chain primitive. The
@@ -189,7 +189,7 @@ func (m *MyApp) ApplySnapshotChunk(ctx context.Context, chunk *abcitypes.Request
 
 var _ abcitypes.Application = (*MyApp)(nil)
 
-func NewMyApp(db *badger.DB) *MyApp {
+func SealstoreAbciApp(db *badger.DB) *MyApp {
 	return &MyApp{
 		db:           db,
 		onGoingBlock: nil,

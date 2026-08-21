@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	"github.com/dgraph-io/badger/v3"
 
-	"sealstore/tx"
+	"sealstore/internal/tx"
 )
 
 // newTestApp opens an in-memory Badger instance so tests touch no filesystem.
@@ -22,7 +22,7 @@ func newTestApp(t *testing.T) *MyApp {
 		t.Fatalf("opening in-memory badger: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return NewMyApp(db)
+	return SealstoreAbciApp(db)
 }
 
 // apply runs a block of txs through FinalizeBlock, then Commit to flush to the
@@ -143,10 +143,10 @@ func TestIsValid(t *testing.T) {
 
 	invalid := [][]byte{
 		nil,
-		[]byte("nonsense"),                   // invalid type tag
-		[]byte{byte(tx.TxCommit)},            // tag only, no key/hash
-		[]byte{byte(tx.TxCommit), 0x01, 'k'}, // key but truncated hash
-		revealTx("key2", nil),                // empty value reveal
+		[]byte("nonsense"),                     // invalid type tag
+		[]byte{byte(tx.TxCommit)},              // tag only, no key/hash
+		[]byte{byte(tx.TxCommit), 0x01, 'k'},   // key but truncated hash
+		revealTx("key2", nil),                  // empty value reveal
 		[]byte{byte(tx.TxTransfer), 0x01, 'k'}, // removed transfer tag must stay unknown
 	}
 	for _, raw := range invalid {

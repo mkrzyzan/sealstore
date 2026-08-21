@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -11,15 +11,16 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 
-	"sealstore/tx"
+	"sealstore/internal/tx"
 )
 
 // ---- on-chain account state ----
 //
 // Account state and active-commit records are stored as small text blobs
 // ("<balance>|<seq>|<hex P>", "<hex C>|<fee>|<t_expire>") so both the ABCI app
-// and the standalone CLI (a separate package that cannot import main) can
-// decode them with plain string splitting.
+// and the standalone CLI (which keeps its own decoder, to stay independent of
+// the app package and its Badger dependency) can decode them with plain string
+// splitting.
 
 // AccountState is the mutable on-chain state of one account.
 type AccountState struct {

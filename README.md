@@ -5,33 +5,57 @@ scheme: nothing is revealed until its hash has been committed first.
 
 ## 🤔 What problem it solves
 
-Public ledgers leak: values sit in the mempool before they land on-chain, so the
-last actor can always front‑run or outbid the first. SealStore flips that — you
-**seal** a value by publishing `sha256(value)`, and **open** it later by revealing
-the value, which is verified against the seal. Great for sealed‑bid auctions,
-private voting, or unbiasable randomness.
+Shor's algorithm breaks ECDSA: every signed payment exposes the public key, and
+every exposed key is a future forged spend. SealStore removes the signature
+**completely** — a spend is authorised by a hash preimage (`Hash(R_current) =
+P`), so only sha256 stands between an attacker and the funds, and quantum
+computers merely halve hash strength (Grover), they don't break it. Revealed
+secrets burn on use (`P` rotates): nothing reusable is ever exposed.
+
+The same seal/open primitive also keeps values out of the mempool — for
+sealed‑bid auctions, private voting, or unbiasable randomness.
 
 ## ⚙️ How it works
 
-Two transaction types, sent as **pure binary** structures marshaled with Go's
-`encoding/binary` package (defined in [`tx/`](tx/)):
+Payments are **signatureless**: an account authorises a spend by revealing a
+hash preimage, not by signing. Accounts hold `{balance, seq, P}`, where `P` is
+the current auth hash (`Hash(R_current)`); each spend rotates `P`, so the
+revealed secret is burned the moment it becomes public.
 
-```
-CommitTx:  0x01 | uvarint(len(key)) | key | 32 raw sha256(value) bytes
-RevealTx:  0x02 | uvarint(len(key)) | key | uvarint(len(value)) | value
-```
+The leading byte is the type tag, byte strings are uvarint-length-prefixed, and
+hashes are raw 32-byte arrays.
 
-The leading byte is the type tag, multi-byte lengths are uvarints, and the commit
-hash is a raw 32-byte array (so the format is byte-order independent).
+- **pay_commit** — reserve a spend without revealing the secret: deduct the
+  fee and record `C`; at most one active commit per account (an expired one
+  is overridden)
+- **pay_reveal** — authorise and execute: check `Hash(R_current) = P`, apply
+  the transfers, rotate `P := P_next`, consume the commitment
 
-- **commit** — store the commitment (kept afterward for verification)
-- **reveal** — accepted only if `sha256(value)` matches the seal
+Two phases, because once `R_current` is visible a miner could substitute a
+different payment — the commitment `C` binds the payment body and rotation
+target before the secret is out
+([full spec](docs/signatureless-commit-reveal.md)).
 
-Anything else — or a reveal with no/mismatched commit — is rejected (ABCI code 1).
+The same commit–reveal primitive also seals plain key/value data
+(`0x01 CommitTx` / `0x02 RevealTx`: publish `sha256(value)`, reveal later
+against the stored seal).
 
-> ⚠️ **Breaking change:** the wire format is now binary. Transactions serialized
-> in the old `commit=<key>=<hash>` / `reveal=<key>=<value>` string format are
-> rejected.
+### 🆚 vs ECDSA-signature payments
+
+| | Signatureless (this chain) | ECDSA payment (typical) |
+|---|---|---|
+| **Byte footprint** | ~336 B in 2 txs (102 + 234); auth is four 32-B hashes | ~110 B in 1 tx — Bitcoin P2WPKH (71 B sig + 33 B pubkey) or Ethereum (65 B r‖s‖v) |
+| **Computation** | 3 sha256 (~1 µs) — no curve math; the client only derives and hashes | 1 ECDSA verify (double scalar multiplication, ~50–100 µs); the client signs |
+| **Blockchain ops** | 2 txs; active-commit state + height clock for expiry; fee at commit; one pending spend per account; settles in ≥ 2 blocks | 1 tx; two balance writes; settles in 1 confirmation |
+
+- **You pay:** ~3× the bytes and a second block inclusion; pending spends
+  serialize per account
+- **You gain:** ~50–100× cheaper verification (every node verifies every tx —
+  hashes, not curve math), only stdlib `sha256`, and no Shor exposure
+- **Burned on use:** a revealed secret can never authorise anything again —
+  `P` has rotated and the commitment is consumed
+- ~192 of the 336 bytes are addresses stored as hex ASCII; raw 32-byte
+  addresses would bring the total to ~240 B
 
 ## 📦 Requirements
 
@@ -42,7 +66,7 @@ Anything else — or a reveal with no/mismatched commit — is rejected (ABCI co
 
 ```bash
 # 1. build the ABCI app + CLI
-go build -o sealstore . && go build -o sealstore-cli ./cli
+go build -o sealstore ./cmd/sealstore && go build -o sealstore-cli ./cmd/sealstore-cli
 
 # 2. create wallets and copy their addresses (balances start at genesis)
 ./sealstore-cli wallet my-secret

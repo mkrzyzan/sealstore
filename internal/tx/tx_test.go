@@ -141,12 +141,12 @@ func TestParseAddress(t *testing.T) {
 	}
 
 	bad := []string{
-		"",                                      // empty
-		"bob",                                   // not an address
-		"1f1f",                                  // too short
-		valid + "a",                             // too long
-		string(bytes.Repeat([]byte("zz"), 32)),   // 64 chars, not hex
-		strings.ToUpper(valid),                  // uppercase is not canonical
+		"",                                     // empty
+		"bob",                                  // not an address
+		"1f1f",                                 // too short
+		valid + "a",                            // too long
+		string(bytes.Repeat([]byte("zz"), 32)), // 64 chars, not hex
+		strings.ToUpper(valid),                 // uppercase is not canonical
 	}
 	for _, s := range bad {
 		if _, err := ParseAddress([]byte(s)); err == nil {

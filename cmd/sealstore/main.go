@@ -12,6 +12,8 @@ import (
 	abciserver "github.com/cometbft/cometbft/abci/server"
 	cmtlog "github.com/cometbft/cometbft/libs/log"
 	"github.com/dgraph-io/badger/v3"
+
+	"sealstore/internal/app"
 )
 
 // ----------------- main app ------------------
@@ -43,10 +45,10 @@ func main() {
 		}
 	}()
 
-	app := NewMyApp(db)
+	abciApp := app.SealstoreAbciApp(db)
 	logger := cmtlog.NewTMLogger(cmtlog.NewSyncWriter(os.Stdout))
 
-	server := abciserver.NewSocketServer(socketAddr, app)
+	server := abciserver.NewSocketServer(socketAddr, abciApp)
 	server.SetLogger(logger)
 
 	if err := server.Start(); err != nil {

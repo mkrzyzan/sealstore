@@ -1,5 +1,6 @@
-// Command cli is a tiny command-line client for the sealstore commit/reveal ABCI
-// app. It talks to the running CometBFT node via the official RPC client.
+// Command sealstore-cli is a tiny command-line client for the sealstore
+// commit/reveal ABCI app. It talks to the running CometBFT node via the
+// official RPC client.
 //
 // Usage:
 //
@@ -45,7 +46,7 @@ import (
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cometbft/cometbft/types"
 
-	"sealstore/tx"
+	"sealstore/internal/tx"
 )
 
 func main() {
